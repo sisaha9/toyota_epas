@@ -1,218 +1,177 @@
-import cantools
 import can
+import cantools
 import multiprocessing
 import time
-from pathlib import Path
+from pynput.keyboard import Key, Listener
 
 class ToyotaInterface():
-    def __init__(self, dbc_fp, can_interface, debug, read_hz, write_steer_hz, write_accel_hz, write_static_hz, write_ui_hz):
-        self.db = cantools.database.load_file(dbc_fp)
-        self.can_bus = can.interface.Bus(can_interface, bustype='socketcan')
-        self.debug = debug
-        self.read_pause = 1/read_hz
-        self.write_steer_pause = 1/write_steer_hz
-        self.write_accel_pause = 1/write_accel_hz
-        self.write_static_pause = 1/write_static_hz
-        self.write_ui_pause = 1/write_ui_hz
-        self.steer_counter = 0
-        self.static_counter = 0
-        self.static_commands = [
-            (0x128, 3, b'\xf4\x01\x90\x83\x00\x37'),
-            (0x141, 2, b'\x00\x00\x00\x46'),
-            (0x160, 7, b'\x00\x00\x08\x12\x01\x31\x9c\x51'),
-            (0x161, 7, b'\x00\x1e\x00\x00\x00\x80\x07'),
-            (0x283, 3, b'\x00\x00\x00\x00\x00\x00\x8c'),
-            (0x2E6, 3, b'\xff\xf8\x00\x08\x7f\xe0\x00\x4e'),
-            (0x2E7, 3, b'\xa8\x9c\x31\x9c\x00\x00\x00\x02'),
-            (0x33E, 20, b'\x0f\xff\x26\x40\x00\x1f\x00'),
-            (0x344, 5, b'\x00\x00\x01\x00\x00\x00\x00\x50'),
-            (0x365, 20, b'\x00\x00\x00\x80\x03\x00\x08'),
-            (0x366, 20, b'\x00\x00\x4d\x82\x40\x02\x00'),
-            (0x470, 100, b'\x00\x00\x02\x7a'),
-            (0x4CB, 100, b'\x0c\x00\x00\x00\x00\x00\x00\x00'),
-        ]
-        self.send_steer_torque_command = {
-            'COUNTER': 0,
-            'SET_ME_1': 1,
-            'STEER_REQUEST': 1,
-            'STEER_TORQUE_CMD': 1,
-            'LKA_STATE': 1,
-            'CHECKSUM': 0
-        }
-        self.send_accel_command = {
-            'ACCEL_CMD': 1,
-            'ALLOW_LONG_PRESS': 1,
-            'ACC_MALFUNCTION': 0,
-            'RADAR_DIRTY': 0,
-            'DISTANCE': 0,
-            'MINI_CAR': 1,
-            'ACC_TYPE': 1,
-            'CANCEL_REQ': 0,
-            'ACC_CUT_IN': 0,
-            'PERMIT_BRAKING': 1,
-            'RELEASE_STANDSTILL': 1,
-            'ITS_CONNECT_LEAD': 0,
-            'ACCEL_CMD_ALT': 1,
-            'CHECKSUM': 0
-        }
-        self.send_ui_command = {
-            "TWO_BEEPS": 0,
-            "LDA_ALERT": 0,
-            "RIGHT_LINE": 2,
-            "LEFT_LINE": 2,
-            "BARRIERS": 0,
-            # static signals
-            "SET_ME_X02": 2,
-            "SET_ME_X01": 1,
-            "LKAS_STATUS": 1,
-            "REPEATED_BEEPS": 0,
-            "LANE_SWAY_FLD": 7,
-            "LANE_SWAY_BUZZER": 0,
-            "LANE_SWAY_WARNING": 0,
-            "LDA_FRONT_CAMERA_BLOCKED": 0,
-            "TAKE_CONTROL": 0,
-            "LANE_SWAY_SENSITIVITY": 2,
-            "LANE_SWAY_TOGGLE": 1,
-            "LDA_ON_MESSAGE": 0,
-            "LDA_SPEED_TOO_LOW": 0,
-            "LDA_SA_TOGGLE": 1,
-            "LDA_SENSITIVITY": 2,
-            "LDA_UNAVAILABLE": 0,
-            "LDA_MALFUNCTION": 0,
-            "LDA_UNAVAILABLE_QUIET": 0,
-            "ADJUSTING_CAMERA": 0,
-            "LDW_EXIST": 1,
-        }
+    def __init__(self, can_interface='can0'):
+        self.db = cantools.database.load_file('toyotadbc.dbc')
+        self.can_interface = can_interface
+        self.can_bus = can.interface.Bus(self.can_interface, bustype='socketcan')
+
+        # Variables for button presses
+        self.flag1 = False
+        self.flag2 = False
+        self.flag3 = False
+        self.flag4 = False
+
+        # CAN Message Lengths
+        self.len2 = 3
+        self.len3 = 4
+        self.len4 = 3
+        self.len5 = 3
+        self.len6 = 4
+        self.len7 = 71
+
+        #CAN Addresses and Data
+        self.array_1 = [0x423]
+        self.array_2 = [0x367, 0x394, 0x3d3]
+        self.array_3 = [0x228, 0x351, 0x3bb, 0xba]
+        self.array_4 = [0x262, 0x2e4, 0x3e6]
+        self.array_5 = [0x1aa, 0x384, 0x386]
+        self.array_6 = [0x283, 0x365, 0x366, 0x3e7]
+        self.array_7 = [0x24, 0x25, 0xaa, 0xb4, 0x1c4, 0x1d0, 0x1d2, 0x1d3, 0x223, 0x224, 0x260, 0x2c1, 0x320, 0x343, 0x344, 0x380, 0x381, 0x389, 0x38f, 0x399, 0x3a5, 0x3b0, 0x3b1, 0x3b7, 0x3bc, 0x3e8, 0x3e9, 0x3f9, 0x411, 0x412, 0x413, 0x414, 0x420, 0x45a, 0x489, 0x48a, 0x48b, 0x4ac, 0x4cb, 0x4d3, 0x4ff, 0x610, 0x611, 0x614, 0x615, 0x619, 0x61a, 0x620, 0x621, 0x622, 0x623, 0x624, 0x638, 0x63c, 0x63d, 0x640, 0x680, 0x6f3, 0x770, 0x778, 0x7c6, 0x7ce, 0x7e0, 0x7e1, 0x7e2, 0x7e3, 0x7e4, 0x7e5, 0x7e6, 0x7e7, 0x7e8]
+        # self.array_1 = [0x423]
+        # self.array_2 = [0x367, 0x394, 0x3d3]
+        # self.array_3 = [0x351, 0x3bb, 0xba]
+        # self.array_4 = [0x262, 0x2e4, 0x3e6]
+        # self.array_5 = [0x1aa, 0x384, 0x386]
+        # self.array_6 = [0x283, 0x365, 0x366, 0x3e7]
+        # self.array_7 = [0x24, 0x25, 0x1c4, 0x1d0, 0x260, 0x2c1, 0x320, 0x343, 0x344, 0x380, 0x381, 0x389, 0x38f, 0x399, 0x3a5, 0x3b0, 0x3b1, 0x3b7, 0x3e8, 0x3e9, 0x3f9, 0x411, 0x412, 0x413, 0x414, 0x420, 0x45a, 0x489, 0x48a, 0x48b, 0x4ac, 0x4cb, 0x4d3, 0x4ff, 0x610, 0x611, 0x614, 0x615, 0x619, 0x61a, 0x620, 0x621, 0x622, 0x623, 0x624, 0x638, 0x63c, 0x63d, 0x640, 0x680, 0x6f3, 0x770, 0x778, 0x7c6, 0x7ce, 0x7e0, 0x7e1, 0x7e2, 0x7e3, 0x7e4, 0x7e5, 0x7e6, 0x7e7, 0x7e8]
+
+        #0x1d2 byte 7, 1st 4 bits(!=0) = cruise_state
+        #0x1d3 byte 2, bit 1 (1) = main_on
+        #0xaa = wheel speed
+        #0x3bc = GEAR_PACKET
+        #0xb4 = SPEED
+
+
+        self.data1 = [0x00]
+        self.data2 = [0x0, 0x0]
+        self.data3 = [0x0, 0x0, 0x0, 0x0]
+        self.data4 = [0x0, 0x0, 0x0, 0x0, 0x0]
+        self.data5 = [0x0, 0x0, 0x0, 0x0, 0x0, 0x0]
+        self.data6 = [0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0]
+        self.data7 = [0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0]
+        self.enable1 = [0xf8, 0x24, 0x02, 0xf8, 0x00, 0x01, 0x80, 0x72]
+        self.enable2 = [0x00, 0xa8, 0x43, 0x10, 0xee, 0x00, 0x00, 0xc5]
+        self.not_in_d = [0x0, 0x20, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0]
+
+        self.speed = 0
+        self.program_exit = False
+
+        self.counter = 0
+        self.keyboard_listener = Listener(on_press=self.on_key_press)
+        self.keyboard_listener.start()
     
-    def start(self):
-        self.unrecognized_ids = []
-        read_thread = multiprocessing.Process(target=self.read_can_messages, name = "CAN Reader")
-        read_thread.start()
-        write_steer_thread = multiprocessing.Process(target=self.write_steer_can_messages, name = "CAN Steer Writer")
-        write_accel_thread = multiprocessing.Process(target=self.write_accel_can_messages, name = "CAN Accel Writer")
-        write_static_thread = multiprocessing.Process(target=self.write_static_can_messages, name = "CAN Static Writer")
-        write_ui_thread = multiprocessing.Process(target=self.write_ui_can_messages, name = "CAN UI Writer")
-        write_steer_thread.start()
-        write_accel_thread.start()
-        write_static_thread.start()
-        write_ui_thread.start()
+    def on_key_press(self, key):
+        try:
+            if key == Key.esc:
+                self.keyboard_listener.stop()
+                self.program_exit = True
+            elif key.char == '1':
+                self.flag1 = not self.flag1
+            elif key.char == '2':
+                self.flag2 = not self.flag2
+            elif key.char == '3':
+                self.flag3 = not self.flag3
+            elif key.char == '4':
+                self.flag4 = not self.flag4
+        except AttributeError:
+            print("Invalid key pressed. Ignoring")
+
+    def start_interface(self):
+        # read_thread = multiprocessing.Process(target=self.read_can, name = "CAN Reader")
+        # read_thread.start()
+        # write_thread = multiprocessing.Process(target=self.write_can, name = "CAN Writer")
+        # write_thread.start()
         try:
             while True:
-                pass
+                self.read_can()
+                self.write_can()
+                if self.program_exit:
+                    break
         except KeyboardInterrupt:
-            print("Keyboard interrupt detected. Stopping the threads...")
-            read_thread.terminate()
-            write_steer_thread.terminate()
-            write_accel_thread.terminate()
-            write_static_thread.terminate()
-            write_ui_thread.terminate()
-            if self.debug:
-                print(set(self.unrecognized_ids))
+            print("Keyboard interrupt")
+            # read_thread.terminate()
+            # write_thread.terminate()
+        exit()
     
-    def write_static_can_messages(self):
-        while True:
-            try:
-                for static_command in self.static_commands:
-                    if self.static_counter % static_command[1] == 0:
-                        static_msg = can.Message(arbitration_id=int(static_command[0]), data=bytearray(static_command[2]))
-                        self.can_bus.send(static_msg)
-                self.static_counter += 1
-                self.static_counter %= 2100
-                time.sleep(self.write_static_pause)
-            except KeyboardInterrupt:
-                print("Keyboard Interrupting static Write")
+    def read_can(self):
+        input_msg = self.can_bus.recv()
+        try:
+            print(self.db.decode_message(input_msg.arbitration_id, input_msg.data))
+        except KeyError:
+            pass
+        time.sleep(1/100)
     
-    def write_accel_can_messages(self):
-        while True:
-            try:
-                accel_send_msg = self.db.get_message_by_name('ACC_CONTROL')
-
-                accel_cmd = accel_send_msg.encode(self.send_accel_command)
-
-                accel_msg = can.Message(arbitration_id=accel_send_msg.frame_id, data=accel_cmd)
-
-                self.send_accel_command['CHECKSUM'] = self.calculate_toyota_checksum(accel_msg)
-
-                accel_cmd = accel_send_msg.encode(self.send_accel_command)
-                accel_msg = can.Message(arbitration_id=accel_send_msg.frame_id, data=accel_cmd)
-
-                self.can_bus.send(accel_msg)
-
-                # print(self.db.decode_message(accel_msg.arbitration_id, accel_msg.data))
-
-                time.sleep(self.write_accel_pause)
-            except KeyboardInterrupt:
-                print("Keyboard Interrupting accel Write")
+    def send_standard_can_msg(self, id, dlc, data):
+        self.can_bus.send(can.Message(int(id), is_extended_id=False, dlc=dlc, data=bytearray(data)))
     
-    def write_steer_can_messages(self):
-        while True:
-            try:
-                steer_torque_send_msg = self.db.get_message_by_name('STEERING_LKA')
-
-                self.send_steer_torque_command['COUNTER'] = self.steer_counter
-
-                steer_torque_cmd = steer_torque_send_msg.encode(self.send_steer_torque_command)
-
-                steer_torque_msg = can.Message(arbitration_id=steer_torque_send_msg.frame_id, data=steer_torque_cmd)
-
-                self.send_steer_torque_command['CHECKSUM'] = self.calculate_toyota_checksum(steer_torque_msg)
-
-                steer_torque_cmd = steer_torque_send_msg.encode(self.send_steer_torque_command)
-                steer_torque_msg = can.Message(arbitration_id=steer_torque_send_msg.frame_id, data=steer_torque_cmd)
-                
-                self.can_bus.send(steer_torque_msg)
-
-                # print(self.db.decode_message(steer_torque_msg.arbitration_id, steer_torque_msg.data))
-                self.steer_counter += 1
-                self.steer_counter %= 63
-                time.sleep(self.write_steer_pause)
-            except KeyboardInterrupt:
-                print("Keyboard Interrupting Steer Write")
-    
-    def write_ui_can_messages(self):
-        while True:
-            try:
-                ui_send_msg = self.db.get_message_by_name('LKAS_HUD')
-
-                ui_cmd = ui_send_msg.encode(self.send_ui_command)
-
-                ui_msg = can.Message(arbitration_id=ui_send_msg.frame_id, data=ui_cmd)
-                
-                self.can_bus.send(ui_msg)
-
-                # print(self.db.decode_message(steer_torque_msg.arbitration_id, steer_torque_msg.data))
-                time.sleep(self.write_ui_pause)
-            except KeyboardInterrupt:
-                print("Keyboard Interrupting UI Write")
+    def send_steer_can_msg(self, id, dlc, data):
+        msg = can.Message(int(id), is_extended_id=False, dlc=dlc, data=bytearray(data))
+        msg.data[-1] = self.calculate_toyota_checksum(msg)
+        self.can_bus.send(msg)
     
     def calculate_toyota_checksum(self, input_msg):
         checksum = sum(bytearray([(input_msg.arbitration_id >> 8) & 0xFF, input_msg.arbitration_id & 0xFF, input_msg.dlc]) + input_msg.data[:-1])
         return checksum & 0xFF
+    
+    def write_can(self):
 
-    def read_can_messages(self):
-        while True:
-            try:
-                steer_torque_sensor_msg = self.db.get_message_by_name('STEER_TORQUE_SENSOR')
-                eps_status_msg = self.db.get_message_by_name('EPS_STATUS')
-                input_msg = self.can_bus.recv()
-                decoded_msg = self.db.decode_message(input_msg.arbitration_id, input_msg.data)
-                # print(input_msg.data[-1])
-                # print(self.calculate_toyota_checksum(input_msg), input_msg.data[-1])
-                print(decoded_msg)
-                time.sleep(self.read_pause)
-            except KeyError as e:
-                missing_frame_id = int(str(e).split("'")[0])
-                self.unrecognized_ids.append(missing_frame_id)
-                if self.debug:
-                    if len(self.unrecognized_ids) > 0:
-                        print(len(set(self.unrecognized_ids)))
-                        print(set(self.unrecognized_ids))
-                    else:
-                        print("No missing IDs yet")
-            except KeyboardInterrupt:
-                print("Keyboard Interrupting Read")
-                return
+        w2 = self.speed & 0xff
+        w1 = self.speed >> 8
+        wheelpot = [w1, w2, w1, w2, w1, w2, w1, w2]
+        speedpak = [0x0, 0x0, 0x0, 0x0, w1, w2, 0x0]
 
-if __name__ == "__main__":
-    toyota_interface = ToyotaInterface(Path("toyotadbc.dbc"), "can0", debug=False, read_hz=100, write_steer_hz=100, write_accel_hz=100, write_static_hz=100, write_ui_hz=1)
-    toyota_interface.start()
+        self.send_standard_can_msg(id=0x423, dlc=1, data=self.data1)
+        for i in range(self.len2):
+            time.sleep(1/1000)
+            self.send_standard_can_msg(id=self.array_2[i], dlc=2, data=self.data2)
+        for i in range(self.len3):
+            time.sleep(1/1000)
+            self.send_standard_can_msg(id=self.array_3[i], dlc=4, data=self.data3)
+        for i in range(self.len4):
+            time.sleep(1/1000)
+            if self.array_4[i] == 0x2E4:
+                self.steer_command = [self.counter, 0x05, 0x00, 0x80, 0xF0]
+                self.send_steer_can_msg(id=self.array_4[i], dlc=5, data=self.steer_command)
+                self.counter += 1
+            else:
+                self.send_standard_can_msg(id=self.array_4[i], dlc=5, data=self.data4)
+        for i in range(self.len5):
+            time.sleep(1/1000)
+            self.send_standard_can_msg(id=self.array_5[i], dlc=6, data=self.data5)
+        for i in range(self.len6):
+            time.sleep(1/1000)
+            self.send_standard_can_msg(id=self.array_6[i], dlc=7, data=self.data6)
+        for i in range(self.len7):
+            time.sleep(1/1000)
+            self.send_standard_can_msg(id=self.array_7[i], dlc=8, data=self.data7)
+            time.sleep(1/1000)
+            self.send_standard_can_msg(id=0xaa, dlc=8, data=wheelpot)
+            time.sleep(1/1000)
+            self.send_standard_can_msg(id=0xb4, dlc=8, data=speedpak)
+        
+        if self.flag1:
+            self.send_standard_can_msg(id=0x1d1, dlc=8, data=self.enable1)
+            print("Enabled!")
+        else:
+            self.send_standard_can_msg(id=0x1d1, dlc=8, data=self.data7)
+        
+        if self.flag2 and self.flag1:
+            self.send_standard_can_msg(id=0x1d2, dlc=8, data=self.enable2)
+            print("Engaged!")
+        else:
+            self.send_standard_can_msg(id=0x1d2, dlc=8, data=self.data7)
+        
+        if self.flag3:
+            self.send_standard_can_msg(id=0x3bc, dlc=8, data=self.data7)
+            print("In Drive!")
+        else:
+            self.send_standard_can_msg(id=0x3bc, dlc=8, data=self.not_in_d)
+        time.sleep(1/100)
+
+toyota_interface = ToyotaInterface()
+toyota_interface.start_interface()
