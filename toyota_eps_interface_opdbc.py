@@ -15,9 +15,10 @@ static_commands = [
 
 packer = CANPacker(dbc_fp)
 
-min_torque = -10
-max_torque = 10
-torque_increment = 0.01
+min_torque = 0
+max_torque = 1280
+freq = 40
+torque_increment = 5/freq
 current_torque = 0
 torque_forward = True
 
@@ -69,4 +70,4 @@ while True:
             pass
     except KeyboardInterrupt:
         exit()
-    time.sleep(1/40)
+    time.sleep(1/freq)
