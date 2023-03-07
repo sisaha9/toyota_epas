@@ -60,9 +60,9 @@ while True:
         steer_counter += 1
         steer_counter %= 64
         if torque_forward:
-            current_torque += 0.1
+            current_torque += torque_increment
         else:
-            current_torque -= 0.1
+            current_torque -= torque_increment
         can_bus.send(steer_msg)
         try:
             print(db.decode_message(input_msg.arbitration_id, input_msg.data))
